@@ -157,7 +157,7 @@ app.post('/api/actors/:actorId/schema', async (req, res) => {
     // If still empty after processing schema, provide a basic URL-only structure
     if (Object.keys(inputSchema).length === 0) {
       inputSchema = {
-        url: 'https://httpbin.org/json'
+        url: 'https://httpbin.org/post'
       };
     }
     
@@ -165,11 +165,11 @@ app.post('/api/actors/:actorId/schema', async (req, res) => {
     if (!inputSchema.url && !inputSchema.startUrl && !inputSchema.startUrls) {
       // Use different URLs based on common patterns
       if (actorData.data.name && actorData.data.name.toLowerCase().includes('scraper')) {
-        inputSchema.url = 'https://httpbin.org/html';
+        inputSchema.url = 'https://httpbin.org/post';
       } else if (actorData.data.name && actorData.data.name.toLowerCase().includes('api')) {
-        inputSchema.url = 'https://httpbin.org/json';
+        inputSchema.url = 'https://httpbin.org/post';
       } else {
-        inputSchema.url = 'https://httpbin.org/json';
+        inputSchema.url = 'https://httpbin.org/post';
       }
     }
     
@@ -213,8 +213,8 @@ app.post('/api/actors/:actorId/run', async (req, res) => {
       try {
         new URL(cleanInput.url);
       } catch (e) {
-        console.log('Invalid URL detected, using fallback');
-        cleanInput.url = 'https://httpbin.org/json';
+        console.error('Invalid URL provided:', cleanInput.url);
+        return res.status(400).json({ error: `Invalid URL provided: ${cleanInput.url}` });
       }
     }
     
@@ -291,6 +291,98 @@ app.post('/api/actors/:actorId/run', async (req, res) => {
   } catch (error) {
     res.status(error.status || 500).json({ 
       error: error.message || 'Failed to run actor' 
+    });
+  }
+});
+
+
+
+// Route to run a generic HTTP request actor with dynamic input schema
+app.post('/api/run-generic-actor', async (req, res) => {
+  try {
+    const { apiKey, url, method = 'GET', body, contentType } = req.body;
+
+    if (!apiKey) {
+      return res.status(400).json({ error: 'API key is required' });
+    }
+    if (!url) {
+      return res.status(400).json({ error: 'URL is required' });
+    }
+
+    // Validate HTTP method
+    const validMethods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'];
+    if (!validMethods.includes(method.toUpperCase())) {
+      return res.status(400).json({ error: 'Invalid HTTP method' });
+    }
+
+    // Build dynamic input schema
+    const inputSchema = {
+      url,
+      method: method.toUpperCase(),
+      payload: body || undefined,
+      headers: contentType ? { 'Content-Type': contentType } : undefined,
+    };
+
+    // Remove undefined fields
+    Object.keys(inputSchema).forEach(key => inputSchema[key] === undefined && delete inputSchema[key]);
+
+    // Make HTTP request directly instead of using an actor
+    try {
+      const axios = require('axios');
+      const headers = {};
+      
+      if (contentType) {
+        headers['Content-Type'] = contentType;
+      }
+      
+      const config = {
+        method: method.toUpperCase(),
+        url,
+        headers,
+        timeout: 30000,
+        data: body
+      };
+      
+      console.log('Making HTTP request with config:', JSON.stringify(config, null, 2));
+      
+      const response = await axios(config);
+      
+      res.json({
+        success: true,
+        inputSchema,
+        status: 'SUCCEEDED',
+        results: [{
+          url: url,
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+          data: response.data,
+          method: method,
+          timestamp: new Date().toISOString()
+        }],
+        stats: {
+          runTimeSecs: 0,
+          requestsTotal: 1,
+          requestsSuccessful: 1
+        }
+      });
+    } catch (httpError) {
+      console.error('HTTP request failed:', httpError.message);
+      res.status(400).json({
+        error: 'HTTP request failed',
+        inputSchema,
+        status: 'FAILED',
+        statusMessage: httpError.message,
+        details: {
+          code: httpError.code,
+          response: httpError.response?.data
+        }
+      });
+    }
+  } catch (error) {
+    res.status(error.status || 500).json({
+      error: error.message || 'Failed to run generic actor',
+      details: error.details,
     });
   }
 });
